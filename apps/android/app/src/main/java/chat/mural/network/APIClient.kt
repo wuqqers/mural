@@ -34,7 +34,7 @@ class APIClient private constructor(
     private val client: OkHttpClient = defaultClient(),
     private val baseUrl: HttpUrl = API_BASE_URL,
     private val modelOverride: String? = null,
-    private val providerType: ProviderType = ProviderType.OpenAI,
+    val providerType: ProviderType = ProviderType.OpenAI,
 ) : TeachingClient, LiveSessionProvider {
     constructor(credentials: CredentialStore) : this(
         readCredential = credentials::read,
@@ -47,8 +47,11 @@ class APIClient private constructor(
         this({ key }, client, baseUrl)
 
     override suspend fun createLiveSession(request: LiveSessionRequest): LiveSessionConnection {
+        if (providerType == ProviderType.Gemini) {
+            throw APIException.UseGeminiLiveTransport
+        }
         if (providerType != ProviderType.OpenAI) {
-            throw APIException.VoiceNotSupported
+            throw APIException.Refused
         }
         val result = post("live/sessions", buildJsonObject {
             put("session", buildJsonObject {
@@ -230,7 +233,7 @@ class APIClient private constructor(
         data object InvalidResponse : APIException("The API returned an incomplete response. Please try again.")
         data object Incomplete : APIException("The API returned an incomplete response. Please try again.")
         data object Refused : APIException("Mural couldn't complete that request. Try a different topic.")
-        data object VoiceNotSupported : APIException("Voice conversations are only available with OpenAI. Use text mode with Gemini.")
+        data object UseGeminiLiveTransport : APIException("Gemini voice uses a separate transport.")
         class Http(val status: Int) : APIException(messageFor(status))
 
         companion object {

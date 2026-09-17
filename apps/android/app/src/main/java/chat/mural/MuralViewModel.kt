@@ -29,7 +29,7 @@ internal fun errorMessageRes(e: Throwable): Int = when (e) {
     is APIClient.APIException.MissingKey -> R.string.error_missing_key
     is APIClient.APIException.Refused -> R.string.error_request_refused
     is APIClient.APIException.InvalidResponse, is APIClient.APIException.Incomplete -> R.string.error_incomplete_response
-    is APIClient.APIException.VoiceNotSupported -> R.string.error_voice_not_supported
+    is GeminiLiveTransport.GeminiTransportException -> 0
     is APIClient.APIException.Http -> when (e.status) {
         401 -> R.string.error_http_401
         403, 404 -> R.string.error_http_403_404
@@ -124,6 +124,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     private val credentials = CredentialStore(application)
     private var api = APIClient(credentials)
     private val transport = LiveTransport(application, viewModelScope)
+    private val geminiTransport = GeminiLiveTransport(application, viewModelScope)
     private val providerStore = ConversationProviderStore(application)
     private val hostedConfiguration = HostedConfiguration.parse(BuildConfig.MANAGED_API_ORIGIN)
     private val accountConfiguration = ManagedAccountConfiguration.parse(BuildConfig.MANAGED_API_ORIGIN, BuildConfig.GOOGLE_SERVER_CLIENT_ID)
@@ -263,6 +264,16 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
             inputLevel = input; outputLevel = output
             if (input > 0.03 || output > 0.03) lastActivity = nowSeconds()
         }
+        geminiTransport.onEvent = { event ->
+            try { handle(event) }
+            catch (_: IllegalArgumentException) { notice = getApplication<Application>().getString(R.string.notice_invalid_voice_update) }
+            catch (_: IllegalStateException) { notice = getApplication<Application>().getString(R.string.notice_invalid_voice_update) }
+        }
+        geminiTransport.onFailure = { fail(it) }
+        geminiTransport.onLevels = { input, output ->
+            inputLevel = input; outputLevel = output
+            if (input > 0.03 || output > 0.03) lastActivity = nowSeconds()
+        }
         meanings.onChange = { meaning = meanings.text; translating = meanings.isLoading; meaningFailed = meanings.error != null }
         meanings.onResult = { request, result ->
             if (session?.id == request.sessionID) updateSession {
@@ -337,6 +348,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
             res == R.string.error_http_generic && e is APIClient.APIException.Http -> app.getString(res, e.status)
             res != 0 -> app.getString(res)
             e is LiveTransport.TransportException -> e.message ?: app.getString(fallback)
+            e is GeminiLiveTransport.GeminiTransportException -> e.message ?: app.getString(fallback)
             else -> app.getString(fallback)
         }
         return requestErrorReference(e)?.let { message + "\n\n" + app.getString(R.string.hosted_error_reference, it) } ?: message
@@ -651,7 +663,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         meanings.reset()
         if (archive.preferences.meaningVisible) scheduleTranslation()
     }
-    fun toggleMute() { if (state == "active" && voiceSession) { isMuted = !isMuted; transport.mute(isMuted) } }
+    fun toggleMute() { if (state == "active" && voiceSession) { isMuted = !isMuted; if (api.providerType == ProviderType.Gemini) geminiTransport.setMute(isMuted) else transport.mute(isMuted) } }
     fun help() {
         if (state != "active") return
         if (voiceSession) { command("instructions", TeachingPolicy.help(language)); notice = getApplication<Application>().getString(R.string.notice_help_simpler) }
@@ -730,7 +742,17 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }
-                transport.connect(provider, instructions, history, module.locale)
+                if (api.providerType == ProviderType.Gemini) {
+                    val config = credentials.readConfig()
+                    geminiTransport.connect(
+                        apiKey = config.apiKey,
+                        model = config.resolvedModel,
+                        instructions = instructions,
+                        language = module.locale,
+                    )
+                } else {
+                    transport.connect(provider, instructions, history, module.locale)
+                }
             } catch (cancelled: CancellationException) {
                 if (choice == ConversationProvider.HOSTED_MINUTES) reconcileHostedSessions()
                 throw cancelled
@@ -748,7 +770,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         delegations.values.toList().forEach { it.cancel() }; delegations.clear(); working = false
         updateSession { it.endReason = reason }
         if (!voiceSession || connecting) { finish(false); return }
-        transport.close()
+        if (api.providerType == ProviderType.Gemini) { geminiTransport.disconnect(); finish(false) } else transport.close()
         closeJob = viewModelScope.launch { delay(5000); if (state == "closing") finish(false) }
     }
     fun background() {
@@ -761,7 +783,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         connectionJob?.cancel(); durationJob?.cancel(); closeJob?.cancel(); assessmentJob?.cancel()
         actionJob?.cancel(); clearLookup(); languageCheckJob?.cancel()
         delegations.values.toList().forEach { it.cancel() }; delegations.clear()
-        transport.disconnect(); inputLevel = 0.0; outputLevel = 0.0; working = false; isMuted = false
+        transport.disconnect(); geminiTransport.disconnect(); inputLevel = 0.0; outputLevel = 0.0; working = false; isMuted = false
         updateSession { it.endedAt = nowSeconds(); it.usageFinal = final }
         state = "ended"
         session?.let {
@@ -785,10 +807,14 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun command(kind: String, content: String, delegationID: String? = null): Boolean {
         if (state != "active" || !voiceSession) return false
-        return transport.send(buildJsonObject {
-            put("type", "session.$kind.append"); put("event_id", UUID.randomUUID().toString())
-            put("delegation_id", delegationID?.let(::JsonPrimitive) ?: JsonNull); put("content", content.take(1000))
-        }).also { if (!it) notice = getApplication<Application>().getString(R.string.notice_update_send_failed) }
+        return if (api.providerType == ProviderType.Gemini) {
+            geminiTransport.sendText(content.take(1000)); true
+        } else {
+            transport.send(buildJsonObject {
+                put("type", "session.$kind.append"); put("event_id", UUID.randomUUID().toString())
+                put("delegation_id", delegationID?.let(::JsonPrimitive) ?: JsonNull); put("content", content.take(1000))
+            })
+        }.also { if (!it) notice = getApplication<Application>().getString(R.string.notice_update_send_failed) }
     }
     private fun handle(event: JsonObject) {
         if (session == null || !isRunning) return
@@ -1073,5 +1099,5 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         return try { archive = ArchiveCodec.merge(archive, prepareImportedArchive(data)); persist(); notice = getApplication<Application>().getString(R.string.notice_backup_imported); true }
         catch (_: Exception) { presentError(getApplication<Application>().getString(R.string.error_import_failed)); false }
     }
-    override fun onCleared() { hostedBindings.disableHelpers(); transport.disconnect(); super.onCleared() }
+    override fun onCleared() { hostedBindings.disableHelpers(); transport.disconnect(); geminiTransport.disconnect(); super.onCleared() }
 }

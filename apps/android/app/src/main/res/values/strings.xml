@@ -26,7 +26,6 @@
     <string name="error_key_delete_failed">The key couldn\'t be removed.</string>
     <string name="error_help_failed">The hint couldn\'t be prepared.</string>
     <string name="error_voice_connect_failed">Mural couldn\'t connect the voice conversation.</string>
-    <string name="error_voice_not_supported">Voice conversations are only available with OpenAI. Use text mode with Gemini or Custom providers.</string>
     <string name="error_send_message_failed">The message couldn\'t be sent.</string>
     <string name="error_lookup_word_failed">The word couldn\'t be looked up.</string>
     <string name="error_find_topic_failed">The topic couldn\'t be found.</string>

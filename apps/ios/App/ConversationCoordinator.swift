@@ -26,6 +26,7 @@ import MuralCore
     private var startAfterConsent = false
     private let api: APIClient
     private let transport = LiveTransport()
+    private let geminiTransport = GeminiLiveTransport()
     private var connectionTask: Task<Void, Never>?
     private var assessmentTask: Task<Void, Never>?
     private var delegationTasks: [String: Task<Void, Never>] = [:]
@@ -75,6 +76,13 @@ import MuralCore
             if input > 0.03 || output > 0.03 { self.lastActivity = .now }
         }
         transport.onFailure = { [weak self] in self?.fail($0) }
+        geminiTransport.onEvent = { [weak self] in self?.handle($0) }
+        geminiTransport.onLevels = { [weak self] input, output in
+            guard let self else { return }
+            self.inputLevel = input; self.outputLevel = output
+            if input > 0.03 || output > 0.03 { self.lastActivity = .now }
+        }
+        geminiTransport.onFailure = { [weak self] in self?.fail($0) }
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
             guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt, raw == AVAudioSession.InterruptionType.began.rawValue else { return }
             Task { @MainActor in self?.end(reason: "Audio interrupted") }
@@ -123,7 +131,13 @@ import MuralCore
         let instructions = TeachingPolicy.voice(language: language, learner: learner, theme: selectedTheme, interests: store.preferences.interests, meaningLanguage: store.preferences.meaningLanguage)
         connectionTask = Task { [weak self] in
             guard let self else { return }
-            do { try await self.transport.connect(api: self.api, instructions: instructions, history: history) }
+            do {
+                if self.api.config.type == .gemini {
+                    try await self.geminiTransport.connect(api: self.api, instructions: instructions, history: history)
+                } else {
+                    try await self.transport.connect(api: self.api, instructions: instructions, history: history)
+                }
+            }
             catch is CancellationError { return }
             catch {
                 guard self.session?.id == generation, self.state == .connecting || self.state == .active else { return }
@@ -174,7 +188,8 @@ import MuralCore
     }
     func toggleMute() {
         guard state == .active else { return }
-        isMuted.toggle(); transport.mute(isMuted)
+        isMuted.toggle()
+        if api.config.type == .gemini { geminiTransport.mute(isMuted) } else { transport.mute(isMuted) }
     }
     func deleteLearningData() {
         guard !isRunning else { return }
@@ -201,7 +216,7 @@ import MuralCore
         durationTask?.cancel(); working = false
         session?.endReason = reason
         if wasConnecting { finish(final: false); return }
-        transport.close()
+        if api.config.type == .gemini { geminiTransport.close() } else { transport.close() }
         closeTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(5))
             guard !Task.isCancelled, self?.state == .closing else { return }
@@ -220,7 +235,7 @@ import MuralCore
         closeTask?.cancel(); durationTask?.cancel(); connectionTask?.cancel()
         assessmentTask?.cancel(); saveTask?.cancel(); saveTask = nil
         delegationTasks.values.forEach { $0.cancel() }; delegationTasks.removeAll()
-        transport.disconnect(); pendingCommands = [:]; working = false
+        transport.disconnect(); geminiTransport.disconnect(); pendingCommands = [:]; working = false
         session?.endedAt = .now; session?.usageFinal = final
         save(); state = .ended
         if let session { finalAssessments.submit(session) }
@@ -243,11 +258,13 @@ import MuralCore
     @discardableResult private func append(_ kind: String, _ text: String, delegationID: String? = nil) -> Bool {
         guard state == .active else { return false }
         let id = UUID().uuidString
-        // Bound short instruction updates conservatively below the protocol token cap.
-        let accepted = transport.send(["type": "session.\(kind).append", "event_id": id,
-                                        "delegation_id": delegationID as Any? ?? NSNull(), "content": String(text.prefix(1000))])
+        let event: [String: Any] = ["type": "session.\(kind).append", "event_id": id,
+                                    "delegation_id": delegationID as Any? ?? NSNull(), "content": String(text.prefix(1000))]
+        let accepted: Bool
+        if api.config.type == .gemini { geminiTransport.sendText(String(text.prefix(1000))); accepted = true }
+        else { accepted = transport.send(event) }
         if accepted { pendingCommands[id] = .now }
-        else { notice = "A conversation update couldn’t be sent. You can keep speaking." }
+        else { notice = "A conversation update couldn't be sent. You can keep speaking." }
         return accepted
     }
     private func handle(_ event: [String: Any]) {

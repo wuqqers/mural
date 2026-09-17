@@ -41,3 +41,7 @@ apps/android/local.properties
 apps/android/.idea/
 *.jks
 *.keystore
+
+# AI project guide (not for public release)
+AI_PROJECT_GUIDE.md
+TURKCE_DIL_DESTEGI_PLAN.md

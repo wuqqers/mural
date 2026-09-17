@@ -22,7 +22,7 @@ enum ConnectionState: Equatable { case idle, connecting, active, closing, ended,
 
     func connect(api: APIClient, instructions: String, history: [[String: Any]]) async throws {
         disconnect()
-        guard api.config.type == .openai else { throw TransportError.voiceNotSupported }
+        guard api.config.type == .openai else { throw TransportError.connection }
         closing = false
         let token = UUID(); attempt = token
         let granted = await AVAudioApplication.requestRecordPermission()
@@ -145,13 +145,12 @@ enum ConnectionState: Equatable { case idle, connecting, active, closing, ended,
         }
     }
     enum TransportError: LocalizedError {
-        case microphone, connection, timeout, voiceNotSupported
+        case microphone, connection, timeout
         var errorDescription: String? {
             switch self {
             case .microphone: "Allow microphone access in iPhone Settings → Mural to start a conversation."
             case .connection: "The voice connection couldn't be established. Check your connection and try again."
             case .timeout: "The voice connection took too long. Please try again."
-            case .voiceNotSupported: "Voice conversations are only available with OpenAI. Use text mode with Gemini."
             }
         }
     }
