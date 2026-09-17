@@ -106,6 +106,7 @@ class GeminiLiveTransport(
                             add(buildJsonObject { put("text", instructions) })
                         })
                     })
+                    put("inputAudioTranscription", buildJsonObject {})
                 })
             }
 
@@ -230,11 +231,9 @@ class GeminiLiveTransport(
         val base64Data = android.util.Base64.encodeToString(pcmData, android.util.Base64.NO_WRAP)
         val msg = buildJsonObject {
             put("realtimeInput", buildJsonObject {
-                put("mediaChunks", buildJsonArray {
-                    add(buildJsonObject {
-                        put("mimeType", JsonPrimitive("audio/pcm;rate=16000"))
-                        put("data", JsonPrimitive(base64Data))
-                    })
+                put("audio", buildJsonObject {
+                    put("mimeType", JsonPrimitive("audio/pcm;rate=16000"))
+                    put("data", JsonPrimitive(base64Data))
                 })
             })
         }

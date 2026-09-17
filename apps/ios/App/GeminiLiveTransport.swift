@@ -50,7 +50,8 @@ import AVFoundation
                 ],
                 "systemInstruction": [
                     "parts": [["text": instructions]]
-                ]
+                ],
+                "inputAudioTranscription": [:]
             ]
         ]
 
@@ -233,7 +234,7 @@ import AVFoundation
             let base64 = pcmData.base64EncodedString()
             let msg: [String: Any] = [
                 "realtimeInput": [
-                    "mediaChunks": [["mimeType": "audio/pcm;rate=16000", "data": base64]]
+                    "audio": ["mimeType": "audio/pcm;rate=16000", "data": base64]
                 ]
             ]
             Task { @MainActor [weak self] in self?.send(msg) }
