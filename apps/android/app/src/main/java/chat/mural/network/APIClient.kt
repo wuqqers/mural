@@ -47,6 +47,9 @@ class APIClient private constructor(
         this({ key }, client, baseUrl)
 
     override suspend fun createLiveSession(request: LiveSessionRequest): LiveSessionConnection {
+        if (providerType != ProviderType.OpenAI) {
+            throw APIException.VoiceNotSupported
+        }
         val result = post("live/sessions", buildJsonObject {
             put("session", buildJsonObject {
                 put("model", "gpt-live-1"); put("instructions", request.instructions); put("input", request.history)
@@ -227,6 +230,7 @@ class APIClient private constructor(
         data object InvalidResponse : APIException("The API returned an incomplete response. Please try again.")
         data object Incomplete : APIException("The API returned an incomplete response. Please try again.")
         data object Refused : APIException("Mural couldn't complete that request. Try a different topic.")
+        data object VoiceNotSupported : APIException("Voice conversations are only available with OpenAI. Use text mode with Gemini.")
         class Http(val status: Int) : APIException(messageFor(status))
 
         companion object {
