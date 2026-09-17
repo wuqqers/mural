@@ -73,7 +73,7 @@ import MuralCore
             do { try FileManager.default.removeItem(at: migrationBackupURL) }
             catch CocoaError.fileNoSuchFile { /* Most installations have no migration backup. */ }
             catch {
-                self.error = "Mural couldn’t delete the older learning backup. Your conversations are still here. Please try again."
+                self.error = "Mural couldn't delete the older learning backup. Your conversations are still here. Please try again."
                 return
             }
         }
@@ -88,23 +88,101 @@ import MuralCore
     }
     private func persist() {
         do { document.payload = try archive.encoded(); try container.mainContext.save(); error = nil }
-        catch { self.error = "Mural couldn’t save your progress. Please export a backup and try again." }
+        catch { self.error = "Mural couldn't save your progress. Please export a backup and try again." }
+    }
+}
+
+/// Supported AI provider types for custom endpoint configuration.
+enum ProviderType: String, CaseIterable, Codable {
+    case openai
+    case xaiGrok
+    case custom
+
+    var displayName: String {
+        switch self {
+        case .openai: "OpenAI"
+        case .xaiGrok: "xAI Grok (Free)"
+        case .custom: "Custom"
+        }
+    }
+}
+
+/// Configuration for an AI provider, including credentials and endpoint details.
+struct ProviderConfig: Codable {
+    let type: ProviderType
+    let apiKey: String
+    let baseURL: String?
+    let model: String?
+
+    var resolvedBaseURL: String {
+        if let baseURL, !baseURL.isEmpty { return baseURL }
+        switch type {
+        case .openai: return "https://api.openai.com/v1"
+        case .xaiGrok: return "https://api.x.ai/v1"
+        case .custom: return ""
+        }
+    }
+
+    var resolvedModel: String {
+        if let model, !model.isEmpty { return model }
+        switch type {
+        case .openai: return "gpt-5.6-luna"
+        case .xaiGrok: return "grok-voice-think-fast-1.0"
+        case .custom: return "gpt-3.5-turbo"
+        }
     }
 }
 
 enum CredentialStore {
     private static let service = "no.william.mural.openai"
+    private static let baseURLKey = "customBaseURL"
+    private static let providerTypeKey = "providerType"
+    private static let modelKey = "customModel"
+
     private static var query: [String: Any] { [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: "owner", kSecAttrSynchronizable as String: false] }
-    static func read() -> String? {
+
+    /// Reads the stored API key from Keychain.
+    static func readKey() -> String? {
         var q = query; q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
         guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
-    static var hasKey: Bool { read() != nil }
-    static func save(_ key: String) throws {
+
+    /// Reads the stored custom base URL, if any.
+    static func readBaseURL() -> String? {
+        UserDefaults.standard.string(forKey: baseURLKey)
+    }
+
+    /// Reads the stored provider type, defaulting to OpenAI.
+    static func readProviderType() -> ProviderType {
+        guard let raw = UserDefaults.standard.string(forKey: providerTypeKey),
+              let type = ProviderType(rawValue: raw) else { return .openai }
+        return type
+    }
+
+    /// Reads the stored custom model name, if any.
+    static func readModel() -> String? {
+        UserDefaults.standard.string(forKey: modelKey)
+    }
+
+    /// Reads the full provider configuration from storage.
+    static func readConfig() -> ProviderConfig {
+        ProviderConfig(
+            type: readProviderType(),
+            apiKey: readKey() ?? "",
+            baseURL: readBaseURL(),
+            model: readModel()
+        )
+    }
+
+    /// Whether a key is currently saved.
+    static var hasKey: Bool { readKey() != nil }
+
+    /// Saves an API key with optional provider configuration.
+    static func save(_ key: String, baseURL: String? = nil, providerType: ProviderType = .openai, model: String? = nil) throws {
         let value = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value.hasPrefix("sk-"), value.count >= 20, !value.contains(where: \.isWhitespace) else { throw KeyError.invalid }
+        guard value.count >= 4, !value.contains(where: \.isWhitespace) else { throw KeyError.invalid }
         let data = Data(value.utf8)
         let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
@@ -112,18 +190,34 @@ enum CredentialStore {
             q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
             guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else { throw KeyError.save }
         } else if status != errSecSuccess { throw KeyError.save }
+
+        var defaults = UserDefaults.standard
+        defaults.set(baseURL, forKey: baseURLKey)
+        defaults.set(providerType.rawValue, forKey: providerTypeKey)
+        defaults.set(model, forKey: modelKey)
     }
+
+    /// Saves a complete provider configuration.
+    static func saveConfig(_ config: ProviderConfig) throws {
+        try save(config.apiKey, baseURL: config.baseURL, providerType: config.type, model: config.model)
+    }
+
+    /// Deletes the stored key and all provider configuration.
     static func delete() throws {
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw KeyError.remove }
+        UserDefaults.standard.removeObject(forKey: baseURLKey)
+        UserDefaults.standard.removeObject(forKey: providerTypeKey)
+        UserDefaults.standard.removeObject(forKey: modelKey)
     }
+
     enum KeyError: LocalizedError {
         case invalid, save, remove
         var errorDescription: String? {
             switch self {
-            case .invalid: "Enter a valid OpenAI API key."
-            case .save: "The key couldn’t be saved to this device’s Keychain."
-            case .remove: "The key couldn’t be removed. Unlock this iPhone and try again."
+            case .invalid: "Enter a valid API key."
+            case .save: "The key couldn't be saved to this device's Keychain."
+            case .remove: "The key couldn't be removed. Unlock this iPhone and try again."
             }
         }
     }

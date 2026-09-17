@@ -45,7 +45,7 @@ import MuralCore
 
     init(store: LearningStore) {
         self.store = store
-        let api = APIClient(); self.api = api
+        let api = APIClient(config: CredentialStore.readConfig()); self.api = api
         finalAssessments = FinalAssessmentQueue { snapshot, passage in
             guard store.preferences.aiConsentVersion == AIProcessingConsent.version || AudioVerification.requested else { throw AIProcessingConsent.ConsentError.required }
             return try await Self.assess(api: api, snapshot: snapshot, passage: passage)

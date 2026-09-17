@@ -294,6 +294,9 @@ struct SettingsView: View {
     @State private var deleting = false
     @State private var notices = false
     @State private var showingAPIKey = false
+    @State private var selectedProvider: ProviderType = CredentialStore.readProviderType()
+    @State private var customBaseURL: String = CredentialStore.readBaseURL() ?? ""
+    @State private var customModel: String = CredentialStore.readModel() ?? ""
     private var store: LearningStore { coordinator.store }
     private var totalVoiceSeconds: Double { store.sessions.reduce(0) { $0 + $1.voiceSeconds } }
     var body: some View {
@@ -320,25 +323,52 @@ struct SettingsView: View {
                 Section {
                     DisclosureGroup(isExpanded: $showingAPIKey) {
                         if hasKey { Label("Your key is saved on this iPhone", systemImage: "checkmark.shield") }
-                        SecureField(hasKey ? "Replace OpenAI key" : "OpenAI API key", text: $key)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive().accessibilityIdentifier("api-key")
+                        Picker("Provider", selection: $selectedProvider) {
+                            ForEach(ProviderType.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                        }
+                        if selectedProvider != .openai {
+                            SecureField("API key", text: $key)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive()
+                            TextField("Custom base URL (optional)", text: $customBaseURL)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            TextField("Model name (optional)", text: $customModel)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        } else {
+                            SecureField(hasKey ? "Replace key" : "API key", text: $key)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive().accessibilityIdentifier("api-key")
+                        }
                         Button(hasKey ? "Save replacement key" : "Save key") {
-                            do { try CredentialStore.save(key); key = ""; hasKey = true; message = "Saved securely. Start a conversation to connect." }
+                            do {
+                                try CredentialStore.save(key, baseURL: customBaseURL.isEmpty ? nil : customBaseURL, providerType: selectedProvider, model: customModel.isEmpty ? nil : customModel)
+                                key = ""; hasKey = true; message = "Saved securely. Start a conversation to connect."
+                            }
                             catch { message = error.localizedDescription }
                         }.disabled(key.isEmpty || coordinator.isRunning)
-                        Link("Open OpenAI API keys", destination: URL(string: "https://platform.openai.com/api-keys")!)
+                        if selectedProvider == .openai {
+                            Link("Open OpenAI API keys", destination: URL(string: "https://platform.openai.com/api-keys")!)
+                        } else if selectedProvider == .xaiGrok {
+                            Link("Get free xAI API key", destination: URL(string: "https://console.x.ai")!)
+                        }
                         if hasKey {
                             Button("Remove key", role: .destructive) {
                                 do { try CredentialStore.delete(); hasKey = false; message = "Your key has been removed." }
                                 catch { message = error.localizedDescription }
                             }.disabled(coordinator.isRunning)
                         }
-                        Text("Your OpenAI account pays for usage. The key stays in this iPhone’s Keychain and is sent only to OpenAI.")
-                            .font(.footnote).foregroundStyle(MuralColor.secondary)
+                        if selectedProvider == .openai {
+                            Text("Your OpenAI account pays for usage. The key stays in this iPhone's Keychain and is sent only to OpenAI.")
+                                .font(.footnote).foregroundStyle(MuralColor.secondary)
+                        } else if selectedProvider == .xaiGrok {
+                            Text("xAI Grok offers free voice conversations. The key stays in this iPhone's Keychain and is sent only to xAI.")
+                                .font(.footnote).foregroundStyle(MuralColor.secondary)
+                        } else {
+                            Text("API key is stored in this iPhone's Keychain. Conversations are sent to the configured endpoint.")
+                                .font(.footnote).foregroundStyle(MuralColor.secondary)
+                        }
                     } label: { Label("Use your own API key", systemImage: "key").accessibilityIdentifier("advanced-api-key") }
                     if let message { Text(message).font(.footnote).foregroundStyle(MuralColor.secondary) }
                 } header: { Text("Advanced") } footer: {
-                    if !hasKey { Text("This version uses your OpenAI API key to start a conversation.") }
+                    if !hasKey { Text("Choose a provider above, or use the default OpenAI integration.") }
                 }
                 Section {
                     Picker("Conversation limit", selection: Binding(get: { store.preferences.sessionMinutes }, set: { value in store.updatePreferences { $0.sessionMinutes = value } })) {

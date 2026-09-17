@@ -18,6 +18,7 @@ import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -32,8 +33,13 @@ class APIClient private constructor(
     private val readCredential: () -> String?,
     private val client: OkHttpClient = defaultClient(),
     private val baseUrl: HttpUrl = API_BASE_URL,
+    private val modelOverride: String? = null,
 ) : TeachingClient, LiveSessionProvider {
-    constructor(credentials: CredentialStore) : this(credentials::read)
+    constructor(credentials: CredentialStore) : this(
+        readCredential = credentials::read,
+        baseUrl = credentials.readConfig().resolvedBaseURL.toHttpUrlOrNull() ?: API_BASE_URL,
+        modelOverride = credentials.readModel(),
+    )
 
     internal constructor(key: String?, client: OkHttpClient, baseUrl: HttpUrl) :
         this({ key }, client, baseUrl)
@@ -101,7 +107,7 @@ class APIClient private constructor(
         purpose: HelperPurpose?,
     ): APIResult {
         val body = buildJsonObject {
-            put("model", "gpt-5.6-luna")
+            put("model", modelOverride ?: "gpt-5.6-luna")
             put("store", false)
             put("instructions", instructions)
             put("input", buildJsonArray {
@@ -149,18 +155,18 @@ class APIClient private constructor(
     }
 
     sealed class APIException(message: String, cause: Throwable? = null) : IOException(message, cause) {
-        data object MissingKey : APIException("Add your OpenAI key in Settings to begin.")
-        data object InvalidResponse : APIException("OpenAI returned an incomplete response. Please try again.")
-        data object Incomplete : APIException("OpenAI returned an incomplete response. Please try again.")
+        data object MissingKey : APIException("Add your API key in Settings to begin.")
+        data object InvalidResponse : APIException("The API returned an incomplete response. Please try again.")
+        data object Incomplete : APIException("The API returned an incomplete response. Please try again.")
         data object Refused : APIException("Mural couldn't complete that request. Try a different topic.")
         class Http(val status: Int) : APIException(messageFor(status))
 
         companion object {
             private fun messageFor(status: Int): String = when (status) {
-                401 -> "Your OpenAI key wasn't accepted. Check it in Settings."
-                403, 404 -> "This API key may not have access to the requested model. Check your OpenAI project."
-                429 -> "OpenAI's usage or rate limit was reached. Check your project billing and limits."
-                else -> "OpenAI couldn't complete the request (HTTP $status). Please try again."
+                401 -> "Your API key wasn't accepted. Check it in Settings."
+                403, 404 -> "This API key may not have access to the requested model. Check your provider settings."
+                429 -> "Usage or rate limit was reached. Check your provider's billing and limits."
+                else -> "The API couldn't complete the request (HTTP $status). Please try again."
             }
         }
     }

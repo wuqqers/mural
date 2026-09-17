@@ -65,6 +65,7 @@ import chat.mural.core.Passage
 import chat.mural.core.SessionRecord
 import chat.mural.core.Speaker
 import chat.mural.core.UsageSummary
+import chat.mural.network.ProviderType
 
 @Composable
 fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Unit, onReviewConsent: () -> Unit,
@@ -122,6 +123,7 @@ fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Uni
                 }
             }
             item {
+                val providerType = vm.providerType
                 SettingsGroup(stringResource(R.string.settings_advanced),
                     if (!vm.hasKey) stringResource(R.string.settings_byok_version_footer) else null) {
                     SettingsRow(stringResource(R.string.settings_use_own_key), symbol = SettingsSymbol.KEY,
@@ -134,14 +136,42 @@ fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Uni
                             SettingsRow(stringResource(if (vm.hasKey) R.string.settings_replace_key else R.string.settings_save_key),
                                 enabled = !vm.isRunning, tint = MuralColors.Secondary, chevron = true, onClick = { keyDialog = true })
                             SettingsDivider()
-                            SettingsRow(stringResource(R.string.settings_open_api_keys), tint = MuralColors.Secondary,
-                                onClick = { open("https://platform.openai.com/api-keys") })
-                            if (vm.hasKey) {
+                            val providerLabel = when (providerType) {
+                                ProviderType.OpenAI -> "OpenAI"
+                                ProviderType.XaiGrok -> "xAI Grok (Free)"
+                                ProviderType.Custom -> "Custom"
+                            }
+                            val providerChoices = ProviderType.entries.map { it.name to it.displayName }
+                            SettingsChoiceRow("Provider", providerLabel, providerType.name,
+                                providerChoices, "settings-provider", !vm.isRunning) { selected ->
+                                val newType = try { ProviderType.valueOf(selected) } catch (_: Exception) { ProviderType.OpenAI }
+                                vm.changeProvider(newType)
+                            }
+                            SettingsDivider()
+                            val linkUrl = when (providerType) {
+                                ProviderType.OpenAI -> "https://platform.openai.com/api-keys"
+                                ProviderType.XaiGrok -> "https://console.x.ai"
+                                else -> null
+                            }
+                            val linkLabel = when (providerType) {
+                                ProviderType.OpenAI -> stringResource(R.string.settings_open_api_keys)
+                                ProviderType.XaiGrok -> "Get free xAI API key"
+                                else -> null
+                            }
+                            if (linkUrl != null && linkLabel != null) {
+                                SettingsRow(linkLabel, tint = MuralColors.Secondary, onClick = { open(linkUrl) })
                                 SettingsDivider()
+                            }
+                            if (vm.hasKey) {
                                 SettingsRow(stringResource(R.string.settings_remove_key), enabled = !vm.isRunning,
                                     tint = MuralColors.Red, onClick = { deleteKey = true })
                             }
-                            Text(stringResource(R.string.settings_key_owner_footer), style = MaterialTheme.typography.bodySmall,
+                            val footerText = when (providerType) {
+                                ProviderType.OpenAI -> stringResource(R.string.settings_key_owner_footer)
+                                ProviderType.XaiGrok -> "xAI Grok offers free voice conversations. The key stays on this device and is sent only to xAI."
+                                else -> "API key is stored on this device. Conversations are sent to the configured endpoint."
+                            }
+                            Text(footerText, style = MaterialTheme.typography.bodySmall,
                                 color = MuralColors.Secondary, modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp))
                         }
                     }
@@ -277,8 +307,10 @@ private fun SettingsHistorySheet(vm: MuralViewModel, onDismiss: () -> Unit, onSe
 
 @Composable
 private fun KeyDialog(vm: MuralViewModel, onDismiss: () -> Unit) {
-    // Intentionally starts empty even when a key exists; secrets never flow back into Compose state.
     var key by remember { mutableStateOf("") }
+    var selectedProvider by remember { mutableStateOf(vm.providerType) }
+    var customBaseURL by remember { mutableStateOf(vm.baseURL.orEmpty()) }
+    var customModel by remember { mutableStateOf(vm.model.orEmpty()) }
     Dialog(onDismissRequest = { key = ""; onDismiss() }) {
         val view = LocalView.current
         DisposableEffect(view) {
@@ -289,8 +321,18 @@ private fun KeyDialog(vm: MuralViewModel, onDismiss: () -> Unit) {
         }
         Surface(shape = RoundedCornerShape(28.dp), color = MuralColors.Surface) {
             Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
-                Text(stringResource(R.string.settings_key_dialog_title), style = MaterialTheme.typography.headlineMedium)
-                Text(stringResource(R.string.settings_key_dialog_note), color = MuralColors.Secondary)
+                val dialogTitle = when (selectedProvider) {
+                    ProviderType.OpenAI -> "OpenAI API Key"
+                    ProviderType.XaiGrok -> "xAI Grok API Key"
+                    ProviderType.Custom -> "Custom API Key"
+                }
+                Text(dialogTitle, style = MaterialTheme.typography.headlineMedium)
+                val dialogNote = when (selectedProvider) {
+                    ProviderType.OpenAI -> stringResource(R.string.settings_key_dialog_note)
+                    ProviderType.XaiGrok -> "xAI Grok free voice. Key stays on this device and is sent only to xAI."
+                    ProviderType.Custom -> "Enter your API key and endpoint details."
+                }
+                Text(dialogNote, color = MuralColors.Secondary)
                 MuralTextField(
                     key,
                     { key = it.take(500) },
@@ -298,11 +340,33 @@ private fun KeyDialog(vm: MuralViewModel, onDismiss: () -> Unit) {
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
-                    label = { Text(stringResource(R.string.settings_key_dialog_field_label)) },
+                    label = { Text(if (selectedProvider == ProviderType.OpenAI) stringResource(R.string.settings_key_dialog_field_label) else "API key") },
                 )
+                if (selectedProvider == ProviderType.Custom) {
+                    MuralTextField(
+                        customBaseURL,
+                        { customBaseURL = it },
+                        Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
+                        label = { Text("Base URL") },
+                    )
+                    MuralTextField(
+                        customModel,
+                        { customModel = it },
+                        Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
+                        label = { Text("Model name (optional)") },
+                    )
+                }
+                val keyReady = key.isNotBlank()
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     MuralTextButton(onClick = { key = ""; onDismiss() }) { Text(stringResource(R.string.common_cancel)) }
-                    Button(onClick = { vm.saveKey(key.trim()); key = ""; onDismiss() }, enabled = key.isNotBlank()) { Text(stringResource(R.string.common_save)) }
+                    Button(onClick = {
+                        vm.saveKeyWithConfig(key.trim(), selectedProvider, customBaseURL.ifBlank { null }, customModel.ifBlank { null })
+                        key = ""; onDismiss()
+                    }, enabled = keyReady && !vm.isRunning) { Text(stringResource(R.string.common_save)) }
                 }
             }
         }

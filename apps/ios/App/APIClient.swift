@@ -10,16 +10,23 @@ struct APIResult { var text: String; var sources: [SourceLink]; var usage: APIUs
 
 @MainActor final class APIClient {
     private let session: URLSession
-    init() {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 45; config.timeoutIntervalForResource = 60
-        config.httpCookieStorage = nil; config.urlCache = nil
-        session = URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
+    private let config: ProviderConfig
+
+    init(config: ProviderConfig? = nil) {
+        let resolved = config ?? CredentialStore.readConfig()
+        self.config = resolved
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.timeoutIntervalForRequest = 45; sessionConfig.timeoutIntervalForResource = 60
+        sessionConfig.httpCookieStorage = nil; sessionConfig.urlCache = nil
+        session = URLSession(configuration: sessionConfig, delegate: NoRedirect(), delegateQueue: nil)
     }
+
     func post(_ path: String, body: [String: Any]) async throws -> [String: Any] {
-        guard let key = CredentialStore.read() else { throw APIError.missingKey }
-        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/" + path)!)
-        request.httpMethod = "POST"; request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
+        guard !config.apiKey.isEmpty else { throw APIError.missingKey }
+        let baseURL = config.resolvedBaseURL
+        guard !baseURL.isEmpty else { throw APIError.missingKey }
+        var request = URLRequest(url: URL(string: baseURL + "/" + path)!)
+        request.httpMethod = "POST"; request.setValue("Bearer " + config.apiKey, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await session.data(for: request)
@@ -29,10 +36,11 @@ struct APIResult { var text: String; var sources: [SourceLink]; var usage: APIUs
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw APIError.invalidResponse }
         return json
     }
+
     func respond(instructions: String, input: String, schema: [String: Any]? = nil, search: Bool = false) async throws -> APIResult {
-        var body: [String: Any] = ["model": "gpt-5.6-luna", "store": false, "instructions": instructions,
-                                  "input": [["role": "user", "content": input]], "max_output_tokens": schema == nil ? 1400 : 2200,
-                                  "reasoning": ["effort": "low"]]
+        var body: [String: Any] = ["model": config.resolvedModel, "store": false, "instructions": instructions,
+                                   "input": [["role": "user", "content": input]], "max_output_tokens": schema == nil ? 1400 : 2200,
+                                   "reasoning": ["effort": "low"]]
         if let schema { body["text"] = ["format": ["type": "json_schema", "name": "mural_result", "strict": true, "schema": schema]] }
         if search { body["tools"] = [["type": "web_search"]]; body["tool_choice"] = "auto"; body["max_tool_calls"] = 1 }
         let json = try await post("responses", body: body)
@@ -69,13 +77,13 @@ struct APIResult { var text: String; var sources: [SourceLink]; var usage: APIUs
         case missingKey, invalidResponse, incomplete, refused, http(Int)
         var errorDescription: String? {
             switch self {
-            case .missingKey: "Add your OpenAI key in Settings to begin."
-            case .invalidResponse, .incomplete: "OpenAI returned an incomplete response. Please try again."
-            case .refused: "Mural couldn’t complete that request. Try a different topic."
-            case .http(401): "Your OpenAI key wasn’t accepted. Check it in Settings."
-            case .http(403), .http(404): "This API key may not have access to the requested model. Check your OpenAI project."
-            case .http(429): "OpenAI’s usage or rate limit was reached. Check your project’s billing and limits."
-            case .http(let status): "OpenAI couldn’t complete the request (HTTP \(status)). Please try again."
+            case .missingKey: "Add your API key in Settings to begin."
+            case .invalidResponse, .incomplete: "The API returned an incomplete response. Please try again."
+            case .refused: "Mural couldn't complete that request. Try a different topic."
+            case .http(401): "Your API key wasn't accepted. Check it in Settings."
+            case .http(403), .http(404): "This API key may not have access to the requested model. Check your provider settings."
+            case .http(429): "Usage or rate limit was reached. Check your provider's billing and limits."
+            case .http(let status): "The API couldn't complete the request (HTTP \(status)). Please try again."
             }
         }
     }

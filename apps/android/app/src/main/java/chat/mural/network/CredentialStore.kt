@@ -10,7 +10,40 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Stores the OpenAI API key encrypted by a non-exportable Android Keystore key. */
+enum class ProviderType(val displayName: String) {
+    OpenAI("OpenAI"),
+    XaiGrok("xAI Grok (Free)"),
+    Custom("Custom"),
+}
+
+data class ProviderConfig(
+    val type: ProviderType,
+    val apiKey: String,
+    val baseURL: String?,
+    val model: String?,
+) {
+    val resolvedBaseURL: String
+        get() = when {
+            !baseURL.isNullOrBlank() -> baseURL
+            else -> when (type) {
+                ProviderType.OpenAI -> "https://api.openai.com/v1"
+                ProviderType.XaiGrok -> "https://api.x.ai/v1"
+                ProviderType.Custom -> ""
+            }
+        }
+
+    val resolvedModel: String
+        get() = when {
+            !model.isNullOrBlank() -> model
+            else -> when (type) {
+                ProviderType.OpenAI -> "gpt-5.6-luna"
+                ProviderType.XaiGrok -> "grok-voice-think-fast-1.0"
+                ProviderType.Custom -> "gpt-3.5-turbo"
+            }
+        }
+}
+
+/** Stores the API key encrypted by a non-exportable Android Keystore key, plus provider configuration. */
 class CredentialStore internal constructor(
     context: Context,
     preferencesName: String,
@@ -23,10 +56,37 @@ class CredentialStore internal constructor(
     val hasKey: Boolean
         get() = read() != null
 
+    /** Reads the stored provider type name, defaulting to openai. */
+    fun readProviderType(): ProviderType {
+        val raw = preferences.getString(PROVIDER_TYPE, null) ?: return ProviderType.OpenAI
+        return try { ProviderType.valueOf(raw) } catch (_: Exception) { ProviderType.OpenAI }
+    }
+
+    /** Reads the stored custom base URL, if any. */
+    fun readBaseURL(): String? = preferences.getString(BASE_URL, null)
+
+    /** Reads the stored custom model name, if any. */
+    fun readModel(): String? = preferences.getString(MODEL, null)
+
+    /** Reads the full provider configuration from storage. */
+    fun readConfig(): ProviderConfig {
+        return ProviderConfig(
+            type = readProviderType(),
+            apiKey = read() ?: "",
+            baseURL = readBaseURL(),
+            model = readModel(),
+        )
+    }
+
     @Synchronized
     fun save(key: String) {
+        save(key, baseURL = null, providerType = ProviderType.OpenAI, model = null)
+    }
+
+    @Synchronized
+    fun save(key: String, baseURL: String?, providerType: ProviderType, model: String?) {
         val value = key.trim()
-        if (!value.startsWith("sk-") || value.length < 20 || value.any(Char::isWhitespace)) {
+        if (value.length < 4 || value.any(Char::isWhitespace)) {
             throw CredentialException.Invalid
         }
 
@@ -37,6 +97,9 @@ class CredentialStore internal constructor(
             val saved = preferences.edit()
                 .putString(CIPHERTEXT, Base64.encodeToString(ciphertext, Base64.NO_WRAP))
                 .putString(IV, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
+                .putString(PROVIDER_TYPE, providerType.name)
+                .putString(BASE_URL, baseURL)
+                .putString(MODEL, model)
                 .commit()
             if (!saved) throw CredentialException.Save
         } catch (error: CredentialException) {
@@ -44,6 +107,11 @@ class CredentialStore internal constructor(
         } catch (_: Exception) {
             throw CredentialException.Save
         }
+    }
+
+    /** Saves a complete provider configuration. */
+    fun saveConfig(config: ProviderConfig) {
+        save(config.apiKey, baseURL = config.baseURL, providerType = config.type, model = config.model)
     }
 
     @Synchronized
@@ -59,7 +127,7 @@ class CredentialStore internal constructor(
                 GCMParameterSpec(GCM_TAG_BITS, Base64.decode(encodedIv, Base64.NO_WRAP)),
             )
             cipher.doFinal(Base64.decode(encodedCiphertext, Base64.NO_WRAP)).toString(Charsets.UTF_8)
-                .takeIf { it.startsWith("sk-") && it.length >= 20 && it.none(Char::isWhitespace) }
+                .takeIf { it.length >= 4 && it.none(Char::isWhitespace) }
                 ?: clearUnreadableCredential()
         } catch (_: Exception) {
             clearUnreadableCredential()
@@ -108,13 +176,12 @@ class CredentialStore internal constructor(
     }
 
     sealed class CredentialException(message: String) : IllegalStateException(message) {
-        data object Invalid : CredentialException("Enter a valid OpenAI API key.")
+        data object Invalid : CredentialException("Enter a valid API key.")
         data object Save : CredentialException("The key couldn't be saved securely on this device.")
         data object Remove : CredentialException("The key couldn't be removed. Unlock this device and try again.")
     }
 
     companion object {
-        // The app excludes all shared preferences from cloud backup and device transfer.
         private const val PREFERENCES = "mural_openai_credentials"
         private const val CIPHERTEXT = "ciphertext"
         private const val IV = "iv"
@@ -122,5 +189,8 @@ class CredentialStore internal constructor(
         private const val ANDROID_KEY_STORE = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val GCM_TAG_BITS = 128
+        private const val PROVIDER_TYPE = "provider_type"
+        private const val BASE_URL = "base_url"
+        private const val MODEL = "model"
     }
 }

@@ -110,6 +110,9 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     private var lookupJob: Job? = null
     var topicResult by mutableStateOf<TopicBrief?>(null); private set
     var hasKey by mutableStateOf(false); private set
+    var providerType by mutableStateOf(ProviderType.OpenAI); private set
+    var baseURL by mutableStateOf<String?>(null); private set
+    var model by mutableStateOf<String?>(null); private set
     val language get() = LanguageRegistry.get(archive.preferences.learningLanguageID)!!
     val learner get() = LearningEngine.project(archive.sessions, language.id, archive.preferences.hiddenWords)
     val isRunning get() = state in listOf("connecting", "active", "closing")
@@ -118,7 +121,7 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val repository = LearningRepository(application)
     private val credentials = CredentialStore(application)
-    private val api = APIClient(credentials)
+    private var api = APIClient(credentials)
     private val transport = LiveTransport(application, viewModelScope)
     private val providerStore = ConversationProviderStore(application)
     private val hostedConfiguration = HostedConfiguration.parse(BuildConfig.MANAGED_API_ORIGIN)
@@ -216,6 +219,9 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
                 conversationProvider = providers.selection
                 finalAssessmentTickets = ConversationProviderPolicy.recoveryTickets(loaded.first.finalAssessments, hostedSessionIDs)
                 hasKey = loaded.second
+                providerType = credentials.readProviderType()
+                baseURL = credentials.readBaseURL()
+                model = credentials.readModel()
                 storageReady = true
                 recoverFinalAssessments()
                 refreshHostedReadiness()
@@ -580,6 +586,21 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
     fun saveKey(key: String) {
         if (isRunning) return
         try { credentials.save(key); hasKey = credentials.hasKey; selectConversationProvider(ConversationProvider.PERSONAL_KEY); recoverFinalAssessments(); notice = getApplication<Application>().getString(R.string.notice_key_saved) }
+        catch (e: Exception) { presentError(e, R.string.error_key_save_failed) }
+    }
+    fun saveKeyWithConfig(key: String, provider: ProviderType, baseURL: String?, model: String?) {
+        if (isRunning) return
+        try {
+            credentials.save(key, baseURL = baseURL, providerType = provider, model = model)
+            hasKey = credentials.hasKey
+            providerType = credentials.readProviderType()
+            this.baseURL = credentials.readBaseURL()
+            this.model = credentials.readModel()
+            api = APIClient(credentials)
+            selectConversationProvider(ConversationProvider.PERSONAL_KEY)
+            recoverFinalAssessments()
+            notice = getApplication<Application>().getString(R.string.notice_key_saved)
+        }
         catch (e: Exception) { presentError(e, R.string.error_key_save_failed) }
     }
     fun deleteKey() {
