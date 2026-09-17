@@ -92,11 +92,13 @@ class GeminiLiveTransport(
             val setupMessage = buildJsonObject {
                 put("setup", buildJsonObject {
                     put("model", "models/$model")
-                    put("responseModalities", buildJsonArray { add(JsonPrimitive("AUDIO")) })
-                    put("speechConfig", buildJsonObject {
-                        put("voiceConfig", buildJsonObject {
-                            put("prebuiltVoiceConfig", buildJsonObject {
-                                put("voiceName", "Kore")
+                    put("generationConfig", buildJsonObject {
+                        put("responseModalities", buildJsonArray { add(JsonPrimitive("AUDIO")) })
+                        put("speechConfig", buildJsonObject {
+                            put("voiceConfig", buildJsonObject {
+                                put("prebuiltVoiceConfig", buildJsonObject {
+                                    put("voiceName", "Kore")
+                                })
                             })
                         })
                     })
@@ -113,7 +115,23 @@ class GeminiLiveTransport(
 
             webSocket = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
+                    android.util.Log.d("GeminiLive", "Connected (HTTP ${response.code})")
                     webSocket.send(setupMessage.toString())
+                }
+
+                override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) {
+                    val text = bytes.utf8()
+                    try {
+                        val msg = json.parseToJsonElement(text).jsonObject
+                        handleServerMessage(msg, attemptGeneration)
+                        if (msg.containsKey("setupComplete")) {
+                            deferred.complete(Unit)
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    webSocket.close(code, reason)
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -227,6 +245,18 @@ class GeminiLiveTransport(
         if (muted.get() || !started.get()) return
         val ws = webSocket ?: return
 
+        // Calculate input audio level (RMS of 16-bit PCM)
+        var sum = 0.0
+        var i = 0
+        while (i < pcmData.size - 1) {
+            val sample = (pcmData[i].toInt() and 0xFF or (pcmData[i + 1].toInt() shl 8)).toShort()
+            sum += sample.toDouble() * sample.toDouble()
+            i += 2
+        }
+        val rms = kotlin.math.sqrt(sum / (pcmData.size / 2))
+        val inputLevel = (rms / Short.MAX_VALUE).coerceIn(0.0, 1.0)
+        onLevels?.invoke(inputLevel, 0.0)
+
         val base64Data = android.util.Base64.encodeToString(pcmData, android.util.Base64.NO_WRAP)
         val msg = buildJsonObject {
             put("realtimeInput", buildJsonObject {
@@ -312,24 +342,38 @@ class GeminiLiveTransport(
 
         recordThread = Thread {
             val buffer = ByteArray(3200)
-            while (generation.get() == expectedGeneration && started.get()) {
-                val read = audioRecord?.read(buffer, 0, buffer.size) ?: -1
-                if (read > 0) {
-                    sendAudio(buffer.copyOf(read))
+            try {
+                while (generation.get() == expectedGeneration && started.get()) {
+                    val read = audioRecord?.read(buffer, 0, buffer.size) ?: -1
+                    if (read > 0) {
+                        sendAudio(buffer.copyOf(read))
+                    }
                 }
-            }
+            } catch (_: InterruptedException) {}
         }.apply { start() }
 
         playThread = Thread {
             audioTrack?.play()
-            while (generation.get() == expectedGeneration && started.get()) {
-                Thread.sleep(10)
-            }
+            try {
+                while (generation.get() == expectedGeneration && started.get()) {
+                    Thread.sleep(10)
+                }
+            } catch (_: InterruptedException) {}
         }.apply { start() }
     }
 
     private fun playAudioData(data: ByteArray) {
         audioTrack?.write(data, 0, data.size)
+        var sum = 0.0
+        var i = 0
+        while (i < data.size - 1) {
+            val sample = (data[i].toInt() and 0xFF or (data[i + 1].toInt() shl 8)).toShort()
+            sum += sample.toDouble() * sample.toDouble()
+            i += 2
+        }
+        val rms = kotlin.math.sqrt(sum / (data.size / 2))
+        val outputLevel = (rms / Short.MAX_VALUE).coerceIn(0.0, 1.0)
+        onLevels?.invoke(0.0, outputLevel)
     }
 
     private fun stopAudio() {
