@@ -40,12 +40,10 @@ import AVFoundation
         let setupMessage: [String: Any] = [
             "setup": [
                 "model": "models/\(model)",
-                "generationConfig": [
-                    "responseModalities": ["AUDIO"],
-                    "speechConfig": [
-                        "voiceConfig": [
-                            "prebuiltVoiceConfig": ["voiceName": "Kore"]
-                        ]
+                "responseModalities": ["AUDIO"],
+                "speechConfig": [
+                    "voiceConfig": [
+                        "prebuiltVoiceConfig": ["voiceName": "Kore"]
                     ]
                 ],
                 "systemInstruction": [

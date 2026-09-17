@@ -25,6 +25,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -91,13 +92,11 @@ class GeminiLiveTransport(
             val setupMessage = buildJsonObject {
                 put("setup", buildJsonObject {
                     put("model", "models/$model")
-                    put("generationConfig", buildJsonObject {
-                        put("responseModalities", buildJsonArray { add(JsonPrimitive("AUDIO")) })
-                        put("speechConfig", buildJsonObject {
-                            put("voiceConfig", buildJsonObject {
-                                put("prebuiltVoiceConfig", buildJsonObject {
-                                    put("voiceName", "Kore")
-                                })
+                    put("responseModalities", buildJsonArray { add(JsonPrimitive("AUDIO")) })
+                    put("speechConfig", buildJsonObject {
+                        put("voiceConfig", buildJsonObject {
+                            put("prebuiltVoiceConfig", buildJsonObject {
+                                put("voiceName", "Kore")
                             })
                         })
                     })
@@ -143,7 +142,7 @@ class GeminiLiveTransport(
             })
 
             try {
-                deferred.await()
+                withTimeout(15_000L) { deferred.await() }
                 started.set(true)
                 sessionStartTime = System.currentTimeMillis()
                 onEvent?.invoke(buildJsonObject {
