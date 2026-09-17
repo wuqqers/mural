@@ -29,6 +29,7 @@ internal fun errorMessageRes(e: Throwable): Int = when (e) {
     is APIClient.APIException.MissingKey -> R.string.error_missing_key
     is APIClient.APIException.Refused -> R.string.error_request_refused
     is APIClient.APIException.InvalidResponse, is APIClient.APIException.Incomplete -> R.string.error_incomplete_response
+    is APIClient.APIException.VoiceNotSupported -> R.string.error_voice_not_supported
     is APIClient.APIException.Http -> when (e.status) {
         401 -> R.string.error_http_401
         403, 404 -> R.string.error_http_403_404
@@ -608,6 +609,17 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
         try { credentials.delete(); hasKey = false }
         catch (e: Exception) { presentError(e, R.string.error_key_delete_failed) }
         finally { hasKey = credentials.hasKey }
+    }
+    fun changeProvider(newType: ProviderType) {
+        if (isRunning || newType == providerType) return
+        providerType = newType
+        if (hasKey) {
+            try {
+                val config = credentials.readConfig()
+                credentials.save(config.apiKey, baseURL = config.baseURL, providerType = newType, model = config.model)
+                api = APIClient(credentials)
+            } catch (_: Exception) { }
+        }
     }
     fun updatePreferences(preferences: Preferences) {
         if (isRunning || !storageReady) return

@@ -26,6 +26,7 @@
     <string name="error_key_delete_failed">No se pudo eliminar la clave.</string>
     <string name="error_help_failed">No se pudo preparar la pista.</string>
     <string name="error_voice_connect_failed">No se pudo conectar la voz.</string>
+    <string name="error_voice_not_supported">Las conversaciones de voz solo están disponibles con OpenAI. Usa el modo de texto con Gemini o proveedores personalizados.</string>
     <string name="error_send_message_failed">No se pudo enviar el mensaje.</string>
     <string name="error_lookup_word_failed">No se pudo consultar la palabra.</string>
     <string name="error_find_topic_failed">No se pudo buscar el tema.</string>
