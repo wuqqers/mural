@@ -101,7 +101,7 @@ enum ProviderType: String, CaseIterable, Codable {
     var displayName: String {
         switch self {
         case .openai: "OpenAI"
-        case .xaiGrok: "xAI Grok (Free)"
+        case .xaiGrok: "xAI Grok"
         case .custom: "Custom"
         }
     }

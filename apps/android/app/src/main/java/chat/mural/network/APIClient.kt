@@ -34,11 +34,13 @@ class APIClient private constructor(
     private val client: OkHttpClient = defaultClient(),
     private val baseUrl: HttpUrl = API_BASE_URL,
     private val modelOverride: String? = null,
+    private val providerType: ProviderType = ProviderType.OpenAI,
 ) : TeachingClient, LiveSessionProvider {
     constructor(credentials: CredentialStore) : this(
         readCredential = credentials::read,
         baseUrl = credentials.readConfig().resolvedBaseURL.toHttpUrlOrNull() ?: API_BASE_URL,
         modelOverride = credentials.readModel(),
+        providerType = credentials.readProviderType(),
     )
 
     internal constructor(key: String?, client: OkHttpClient, baseUrl: HttpUrl) :
@@ -106,37 +108,73 @@ class APIClient private constructor(
         search: Boolean,
         purpose: HelperPurpose?,
     ): APIResult {
-        val body = buildJsonObject {
-            put("model", modelOverride ?: "gpt-5.6-luna")
-            put("store", false)
-            put("instructions", instructions)
-            put("input", buildJsonArray {
-                add(buildJsonObject {
-                    put("role", "user")
-                    put("content", input)
-                })
-            })
-            put("max_output_tokens", if (schema == null) 1_400 else 2_200)
-            put("reasoning", buildJsonObject { put("effort", "low") })
-            if (schema != null) {
-                put("text", buildJsonObject {
-                    put("format", buildJsonObject {
-                        put("type", "json_schema")
-                        put("name", "mural_result")
-                        put("strict", true)
-                        put("schema", schema)
+        val isOpenAI = providerType == ProviderType.OpenAI
+        val body = if (isOpenAI) {
+            // OpenAI Responses API format
+            buildJsonObject {
+                put("model", modelOverride ?: "gpt-5.6-luna")
+                put("store", false)
+                put("instructions", instructions)
+                put("input", buildJsonArray {
+                    add(buildJsonObject {
+                        put("role", "user")
+                        put("content", input)
                     })
                 })
+                put("max_output_tokens", if (schema == null) 1_400 else 2_200)
+                put("reasoning", buildJsonObject { put("effort", "low") })
+                if (schema != null) {
+                    put("text", buildJsonObject {
+                        put("format", buildJsonObject {
+                            put("type", "json_schema")
+                            put("name", "mural_result")
+                            put("strict", true)
+                            put("schema", schema)
+                        })
+                    })
+                }
+                if (search) {
+                    put("tools", buildJsonArray { add(buildJsonObject { put("type", "web_search") }) })
+                    put("tool_choice", "auto")
+                    put("max_tool_calls", 1)
+                }
             }
-            if (search) {
-                put("tools", buildJsonArray { add(buildJsonObject { put("type", "web_search") }) })
-                put("tool_choice", "auto")
-                put("max_tool_calls", 1)
+        } else {
+            // Chat Completions format (xAI Grok, Custom providers)
+            buildJsonObject {
+                put("model", modelOverride ?: "grok-4")
+                put("messages", buildJsonArray {
+                    add(buildJsonObject {
+                        put("role", "system")
+                        put("content", instructions)
+                    })
+                    add(buildJsonObject {
+                        put("role", "user")
+                        put("content", input)
+                    })
+                })
+                put("max_tokens", if (schema == null) 1_400 else 2_200)
+                put("temperature", 0.7)
+                if (schema != null) {
+                    put("response_format", buildJsonObject {
+                        put("type", "json_schema")
+                        put("json_schema", buildJsonObject {
+                            put("name", "mural_result")
+                            put("strict", true)
+                            put("schema", schema)
+                        })
+                    })
+                }
             }
         }
 
-        val response = post("responses", body)
-        return decodeTeachingResponse(response)
+        val endpoint = if (isOpenAI) "responses" else "chat/completions"
+        val response = post(endpoint, body)
+        return if (isOpenAI) {
+            decodeTeachingResponse(response)
+        } else {
+            decodeChatCompletionsResponse(response)
+        }
     }
 
     private fun Response.readBoundedBody(): String {

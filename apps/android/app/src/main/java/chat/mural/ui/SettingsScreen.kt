@@ -138,7 +138,7 @@ fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Uni
                             SettingsDivider()
                             val providerLabel = when (providerType) {
                                 ProviderType.OpenAI -> "OpenAI"
-                                ProviderType.XaiGrok -> "xAI Grok (Free)"
+                                ProviderType.XaiGrok -> "xAI Grok"
                                 ProviderType.Custom -> "Custom"
                             }
                             val providerChoices = ProviderType.entries.map { it.name to it.displayName }
@@ -155,7 +155,7 @@ fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Uni
                             }
                             val linkLabel = when (providerType) {
                                 ProviderType.OpenAI -> stringResource(R.string.settings_open_api_keys)
-                                ProviderType.XaiGrok -> "Get free xAI API key"
+                                ProviderType.XaiGrok -> "Get xAI API key"
                                 else -> null
                             }
                             if (linkUrl != null && linkLabel != null) {
@@ -168,7 +168,7 @@ fun SettingsScreen(vm: MuralViewModel, onExport: () -> Unit, onImport: () -> Uni
                             }
                             val footerText = when (providerType) {
                                 ProviderType.OpenAI -> stringResource(R.string.settings_key_owner_footer)
-                                ProviderType.XaiGrok -> "xAI Grok offers free voice conversations. The key stays on this device and is sent only to xAI."
+                                ProviderType.XaiGrok -> "xAI Grok voice conversations. The key stays on this device and is sent only to xAI."
                                 else -> "API key is stored on this device. Conversations are sent to the configured endpoint."
                             }
                             Text(footerText, style = MaterialTheme.typography.bodySmall,
@@ -329,7 +329,7 @@ private fun KeyDialog(vm: MuralViewModel, onDismiss: () -> Unit) {
                 Text(dialogTitle, style = MaterialTheme.typography.headlineMedium)
                 val dialogNote = when (selectedProvider) {
                     ProviderType.OpenAI -> stringResource(R.string.settings_key_dialog_note)
-                    ProviderType.XaiGrok -> "xAI Grok free voice. Key stays on this device and is sent only to xAI."
+                    ProviderType.XaiGrok -> "xAI Grok voice. Key stays on this device and is sent only to xAI."
                     ProviderType.Custom -> "Enter your API key and endpoint details."
                 }
                 Text(dialogNote, color = MuralColors.Secondary)

@@ -44,6 +44,31 @@ internal fun decodeTeachingResponse(response: JsonObject): APIResult {
     )
 }
 
+/** Decodes Chat Completions output (xAI Grok, Custom providers). */
+internal fun decodeChatCompletionsResponse(response: JsonObject): APIResult {
+    val choices = response.array("choices")
+    val firstChoice = choices.firstOrNull() as? JsonObject
+        ?: throw APIClient.APIException.Incomplete
+    val message = firstChoice["message"] as? JsonObject
+        ?: throw APIClient.APIException.Incomplete
+    val text = message.string("content").orEmpty()
+    if (text.isEmpty()) throw APIClient.APIException.Incomplete
+
+    val finishReason = firstChoice.string("finish_reason")
+    if (finishReason == "length") throw APIClient.APIException.Incomplete
+
+    val usage = response["usage"] as? JsonObject
+    return APIResult(
+        text = text,
+        sources = emptyList(),
+        usage = APIUsage(
+            input = ((usage?.get("prompt_tokens") as? JsonPrimitive)?.intOrNull ?: 0).coerceIn(0, 1_000_000_000),
+            output = ((usage?.get("completion_tokens") as? JsonPrimitive)?.intOrNull ?: 0).coerceIn(0, 1_000_000_000),
+            searches = 0,
+        ),
+    )
+}
+
 private fun isSafeSourceUrl(value: String): Boolean = try {
     val uri = URI(value)
     uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null

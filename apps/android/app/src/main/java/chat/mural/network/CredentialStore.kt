@@ -12,7 +12,7 @@ import javax.crypto.spec.GCMParameterSpec
 
 enum class ProviderType(val displayName: String) {
     OpenAI("OpenAI"),
-    XaiGrok("xAI Grok (Free)"),
+    XaiGrok("xAI Grok"),
     Custom("Custom"),
 }
 

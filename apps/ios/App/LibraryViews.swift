@@ -347,7 +347,7 @@ struct SettingsView: View {
                         if selectedProvider == .openai {
                             Link("Open OpenAI API keys", destination: URL(string: "https://platform.openai.com/api-keys")!)
                         } else if selectedProvider == .xaiGrok {
-                            Link("Get free xAI API key", destination: URL(string: "https://console.x.ai")!)
+                            Link("Get xAI API key", destination: URL(string: "https://console.x.ai")!)
                         }
                         if hasKey {
                             Button("Remove key", role: .destructive) {
@@ -359,7 +359,7 @@ struct SettingsView: View {
                             Text("Your OpenAI account pays for usage. The key stays in this iPhone's Keychain and is sent only to OpenAI.")
                                 .font(.footnote).foregroundStyle(MuralColor.secondary)
                         } else if selectedProvider == .xaiGrok {
-                            Text("xAI Grok offers free voice conversations. The key stays in this iPhone's Keychain and is sent only to xAI.")
+                            Text("xAI Grok voice conversations. The key stays in this iPhone's Keychain and is sent only to xAI.")
                                 .font(.footnote).foregroundStyle(MuralColor.secondary)
                         } else {
                             Text("API key is stored in this iPhone's Keychain. Conversations are sent to the configured endpoint.")

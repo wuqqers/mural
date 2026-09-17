@@ -38,29 +38,57 @@ struct APIResult { var text: String; var sources: [SourceLink]; var usage: APIUs
     }
 
     func respond(instructions: String, input: String, schema: [String: Any]? = nil, search: Bool = false) async throws -> APIResult {
-        var body: [String: Any] = ["model": config.resolvedModel, "store": false, "instructions": instructions,
-                                   "input": [["role": "user", "content": input]], "max_output_tokens": schema == nil ? 1400 : 2200,
-                                   "reasoning": ["effort": "low"]]
-        if let schema { body["text"] = ["format": ["type": "json_schema", "name": "mural_result", "strict": true, "schema": schema]] }
-        if search { body["tools"] = [["type": "web_search"]]; body["tool_choice"] = "auto"; body["max_tool_calls"] = 1 }
-        let json = try await post("responses", body: body)
-        guard json["status"] as? String == "completed" else { throw APIError.incomplete }
-        var text = "", sources: [SourceLink] = [], usage = APIUsage()
-        for item in json["output"] as? [[String: Any]] ?? [] {
-            if item["type"] as? String == "web_search_call" { usage.searches += 1 }
-            for content in item["content"] as? [[String: Any]] ?? [] {
-                if content["type"] as? String == "refusal" { throw APIError.refused }
-                if content["type"] as? String == "output_text" { text += content["text"] as? String ?? "" }
-                for citation in content["annotations"] as? [[String: Any]] ?? [] {
-                    guard citation["type"] as? String == "url_citation", let url = citation["url"] as? String else { continue }
-                    let source = SourceLink(title: citation["title"] as? String ?? "Source", url: url)
-                    if source.safeURL != nil && !sources.contains(where: { $0.url == url }) { sources.append(source) }
-                }
+        let isOpenAI = config.type == .openai
+        let body: [String: Any]
+        let endpoint: String
+        if isOpenAI {
+            body = ["model": config.resolvedModel, "store": false, "instructions": instructions,
+                    "input": [["role": "user", "content": input]], "max_output_tokens": schema == nil ? 1400 : 2200,
+                    "reasoning": ["effort": "low"]]
+            endpoint = "responses"
+        } else {
+            body = ["model": config.resolvedModel,
+                    "messages": [["role": "system", "content": instructions], ["role": "user", "content": input]],
+                    "max_tokens": schema == nil ? 1400 : 2200, "temperature": 0.7]
+            endpoint = "chat/completions"
+        }
+        var mutableBody = body
+        if let schema {
+            if isOpenAI {
+                mutableBody["text"] = ["format": ["type": "json_schema", "name": "mural_result", "strict": true, "schema": schema]]
+            } else {
+                mutableBody["response_format"] = ["type": "json_schema", "json_schema": ["name": "mural_result", "strict": true, "schema": schema]]
             }
         }
-        if let u = json["usage"] as? [String: Any] { usage.input = u["input_tokens"] as? Int ?? 0; usage.output = u["output_tokens"] as? Int ?? 0 }
-        guard !text.isEmpty else { throw APIError.incomplete }
-        return APIResult(text: text, sources: sources, usage: usage)
+        if search && isOpenAI { mutableBody["tools"] = [["type": "web_search"]]; mutableBody["tool_choice"] = "auto"; mutableBody["max_tool_calls"] = 1 }
+        let json = try await post(endpoint, body: mutableBody)
+        if isOpenAI {
+            guard json["status"] as? String == "completed" else { throw APIError.incomplete }
+            var text = "", sources: [SourceLink] = [], usage = APIUsage()
+            for item in json["output"] as? [[String: Any]] ?? [] {
+                if item["type"] as? String == "web_search_call" { usage.searches += 1 }
+                for content in item["content"] as? [[String: Any]] ?? [] {
+                    if content["type"] as? String == "refusal" { throw APIError.refused }
+                    if content["type"] as? String == "output_text" { text += content["text"] as? String ?? "" }
+                    for citation in content["annotations"] as? [[String: Any]] ?? [] {
+                        guard citation["type"] as? String == "url_citation", let url = citation["url"] as? String else { continue }
+                        let source = SourceLink(title: citation["title"] as? String ?? "Source", url: url)
+                        if source.safeURL != nil && !sources.contains(where: { $0.url == url }) { sources.append(source) }
+                    }
+                }
+            }
+            if let u = json["usage"] as? [String: Any] { usage.input = u["input_tokens"] as? Int ?? 0; usage.output = u["output_tokens"] as? Int ?? 0 }
+            guard !text.isEmpty else { throw APIError.incomplete }
+            return APIResult(text: text, sources: sources, usage: usage)
+        } else {
+            guard let choices = json["choices"] as? [[String: Any]], let first = choices.first,
+                  let message = first["message"] as? [String: Any],
+                  let text = message["content"] as? String, !text.isEmpty else { throw APIError.incomplete }
+            if first["finish_reason"] as? String == "length" { throw APIError.incomplete }
+            var usage = APIUsage()
+            if let u = json["usage"] as? [String: Any] { usage.input = u["prompt_tokens"] as? Int ?? 0; usage.output = u["completion_tokens"] as? Int ?? 0 }
+            return APIResult(text: text, sources: [], usage: usage)
+        }
     }
     static func object(_ fields: [String: Any]) -> [String: Any] { ["type": "object", "properties": fields, "required": fields.keys.sorted(), "additionalProperties": false] }
     static let string: [String: Any] = ["type": "string"]
