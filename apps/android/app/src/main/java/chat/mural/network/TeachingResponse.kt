@@ -69,6 +69,36 @@ internal fun decodeChatCompletionsResponse(response: JsonObject): APIResult {
     )
 }
 
+/** Decodes Gemini generateContent output. */
+internal fun decodeGeminiResponse(response: JsonObject): APIResult {
+    val candidates = response.array("candidates")
+    val candidate = candidates.firstOrNull() as? JsonObject
+        ?: throw APIClient.APIException.Incomplete
+    val content = candidate["content"] as? JsonObject
+        ?: throw APIClient.APIException.Incomplete
+    val parts = content.array("parts")
+    val text = StringBuilder()
+    for (part in parts) {
+        val p = part as? JsonObject ?: continue
+        text.append(p.string("text").orEmpty())
+    }
+    if (text.isEmpty()) throw APIClient.APIException.Incomplete
+
+    val finishReason = candidate.string("finishReason")
+    if (finishReason == "MAX_TOKENS") throw APIClient.APIException.Incomplete
+
+    val usage = response["usageMetadata"] as? JsonObject
+    return APIResult(
+        text = text.toString(),
+        sources = emptyList(),
+        usage = APIUsage(
+            input = ((usage?.get("promptTokenCount") as? JsonPrimitive)?.intOrNull ?: 0).coerceIn(0, 1_000_000_000),
+            output = ((usage?.get("candidatesTokenCount") as? JsonPrimitive)?.intOrNull ?: 0).coerceIn(0, 1_000_000_000),
+            searches = 0,
+        ),
+    )
+}
+
 private fun isSafeSourceUrl(value: String): Boolean = try {
     val uri = URI(value)
     uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null

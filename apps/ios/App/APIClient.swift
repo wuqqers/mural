@@ -39,6 +39,7 @@ struct APIResult { var text: String; var sources: [SourceLink]; var usage: APIUs
 
     func respond(instructions: String, input: String, schema: [String: Any]? = nil, search: Bool = false) async throws -> APIResult {
         let isOpenAI = config.type == .openai
+        let isGemini = config.type == .gemini
         let body: [String: Any]
         let endpoint: String
         if isOpenAI {
@@ -46,6 +47,12 @@ struct APIResult { var text: String; var sources: [SourceLink]; var usage: APIUs
                     "input": [["role": "user", "content": input]], "max_output_tokens": schema == nil ? 1400 : 2200,
                     "reasoning": ["effort": "low"]]
             endpoint = "responses"
+        } else if isGemini {
+            let model = config.resolvedModel
+            body = ["contents": [["role": "user", "parts": [["text": input]]]],
+                    "systemInstruction": ["parts": [["text": instructions]]],
+                    "generationConfig": ["temperature": 0.7, "maxOutputTokens": schema == nil ? 1400 : 2200]]
+            endpoint = "models/\(model):generateContent"
         } else {
             body = ["model": config.resolvedModel,
                     "messages": [["role": "system", "content": instructions], ["role": "user", "content": input]],
@@ -56,6 +63,11 @@ struct APIResult { var text: String; var sources: [SourceLink]; var usage: APIUs
         if let schema {
             if isOpenAI {
                 mutableBody["text"] = ["format": ["type": "json_schema", "name": "mural_result", "strict": true, "schema": schema]]
+            } else if isGemini {
+                var genConfig = mutableBody["generationConfig"] as? [String: Any] ?? [:]
+                genConfig["responseMimeType"] = "application/json"
+                genConfig["responseSchema"] = schema
+                mutableBody["generationConfig"] = genConfig
             } else {
                 mutableBody["response_format"] = ["type": "json_schema", "json_schema": ["name": "mural_result", "strict": true, "schema": schema]]
             }
@@ -80,6 +92,17 @@ struct APIResult { var text: String; var sources: [SourceLink]; var usage: APIUs
             if let u = json["usage"] as? [String: Any] { usage.input = u["input_tokens"] as? Int ?? 0; usage.output = u["output_tokens"] as? Int ?? 0 }
             guard !text.isEmpty else { throw APIError.incomplete }
             return APIResult(text: text, sources: sources, usage: usage)
+        } else if isGemini {
+            guard let candidates = json["candidates"] as? [[String: Any]], let first = candidates.first,
+                  let content = first["content"] as? [String: Any],
+                  let parts = content["parts"] as? [[String: Any]] else { throw APIError.incomplete }
+            var text = ""
+            for part in parts { text += part["text"] as? String ?? "" }
+            guard !text.isEmpty else { throw APIError.incomplete }
+            if first["finishReason"] as? String == "MAX_TOKENS" { throw APIError.incomplete }
+            var usage = APIUsage()
+            if let u = json["usageMetadata"] as? [String: Any] { usage.input = u["promptTokenCount"] as? Int ?? 0; usage.output = u["candidatesTokenCount"] as? Int ?? 0 }
+            return APIResult(text: text, sources: [], usage: usage)
         } else {
             guard let choices = json["choices"] as? [[String: Any]], let first = choices.first,
                   let message = first["message"] as? [String: Any],

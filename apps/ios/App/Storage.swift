@@ -95,13 +95,13 @@ import MuralCore
 /// Supported AI provider types for custom endpoint configuration.
 enum ProviderType: String, CaseIterable, Codable {
     case openai
-    case xaiGrok
+    case gemini
     case custom
 
     var displayName: String {
         switch self {
         case .openai: "OpenAI"
-        case .xaiGrok: "xAI Grok"
+        case .gemini: "Gemini"
         case .custom: "Custom"
         }
     }
@@ -118,7 +118,7 @@ struct ProviderConfig: Codable {
         if let baseURL, !baseURL.isEmpty { return baseURL }
         switch type {
         case .openai: return "https://api.openai.com/v1"
-        case .xaiGrok: return "https://api.x.ai/v1"
+        case .gemini: return "https://generativelanguage.googleapis.com/v1beta"
         case .custom: return ""
         }
     }
@@ -127,7 +127,7 @@ struct ProviderConfig: Codable {
         if let model, !model.isEmpty { return model }
         switch type {
         case .openai: return "gpt-5.6-luna"
-        case .xaiGrok: return "grok-voice-think-fast-1.0"
+        case .gemini: return "gemini-2.0-flash"
         case .custom: return "gpt-3.5-turbo"
         }
     }

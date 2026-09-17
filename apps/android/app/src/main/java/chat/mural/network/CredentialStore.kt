@@ -12,7 +12,7 @@ import javax.crypto.spec.GCMParameterSpec
 
 enum class ProviderType(val displayName: String) {
     OpenAI("OpenAI"),
-    XaiGrok("xAI Grok"),
+    Gemini("Gemini"),
     Custom("Custom"),
 }
 
@@ -27,7 +27,7 @@ data class ProviderConfig(
             !baseURL.isNullOrBlank() -> baseURL
             else -> when (type) {
                 ProviderType.OpenAI -> "https://api.openai.com/v1"
-                ProviderType.XaiGrok -> "https://api.x.ai/v1"
+                ProviderType.Gemini -> "https://generativelanguage.googleapis.com/v1beta"
                 ProviderType.Custom -> ""
             }
         }
@@ -37,7 +37,7 @@ data class ProviderConfig(
             !model.isNullOrBlank() -> model
             else -> when (type) {
                 ProviderType.OpenAI -> "gpt-5.6-luna"
-                ProviderType.XaiGrok -> "grok-voice-think-fast-1.0"
+                ProviderType.Gemini -> "gemini-3.1-flash-live-preview"
                 ProviderType.Custom -> "gpt-3.5-turbo"
             }
         }

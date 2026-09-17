@@ -109,9 +109,16 @@ class APIClient private constructor(
         purpose: HelperPurpose?,
     ): APIResult {
         val isOpenAI = providerType == ProviderType.OpenAI
-        val body = if (isOpenAI) {
-            // OpenAI Responses API format
-            buildJsonObject {
+        val isGemini = providerType == ProviderType.Gemini
+
+        val body: JsonObject
+        val endpoint: String
+        val decoder: (JsonObject) -> APIResult
+
+        if (isOpenAI) {
+            endpoint = "responses"
+            decoder = ::decodeTeachingResponse
+            body = buildJsonObject {
                 put("model", modelOverride ?: "gpt-5.6-luna")
                 put("store", false)
                 put("instructions", instructions)
@@ -139,10 +146,38 @@ class APIClient private constructor(
                     put("max_tool_calls", 1)
                 }
             }
+        } else if (isGemini) {
+            val model = modelOverride ?: "gemini-2.0-flash"
+            endpoint = "models/${model}:generateContent"
+            decoder = ::decodeGeminiResponse
+            body = buildJsonObject {
+                put("contents", buildJsonArray {
+                    add(buildJsonObject {
+                        put("role", "user")
+                        put("parts", buildJsonArray {
+                            add(buildJsonObject { put("text", input) })
+                        })
+                    })
+                })
+                put("systemInstruction", buildJsonObject {
+                    put("parts", buildJsonArray {
+                        add(buildJsonObject { put("text", instructions) })
+                    })
+                })
+                put("generationConfig", buildJsonObject {
+                    put("temperature", 0.7)
+                    put("maxOutputTokens", if (schema == null) 1_400 else 2_200)
+                    if (schema != null) {
+                        put("responseMimeType", "application/json")
+                        put("responseSchema", schema)
+                    }
+                })
+            }
         } else {
-            // Chat Completions format (xAI Grok, Custom providers)
-            buildJsonObject {
-                put("model", modelOverride ?: "grok-4")
+            endpoint = "chat/completions"
+            decoder = ::decodeChatCompletionsResponse
+            body = buildJsonObject {
+                put("model", modelOverride ?: "gpt-3.5-turbo")
                 put("messages", buildJsonArray {
                     add(buildJsonObject {
                         put("role", "system")
@@ -168,13 +203,8 @@ class APIClient private constructor(
             }
         }
 
-        val endpoint = if (isOpenAI) "responses" else "chat/completions"
         val response = post(endpoint, body)
-        return if (isOpenAI) {
-            decodeTeachingResponse(response)
-        } else {
-            decodeChatCompletionsResponse(response)
-        }
+        return decoder(response)
     }
 
     private fun Response.readBoundedBody(): String {
