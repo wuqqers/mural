@@ -60,6 +60,8 @@ class GeminiLiveTransport(
     private var playThread: Thread? = null
     private val audioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true }
+    private var smoothInput = 0.0
+    private var smoothOutput = 0.0
     private var sessionStartTime: Long = 0
 
     val isStarted: Boolean get() = started.get()
@@ -237,7 +239,8 @@ class GeminiLiveTransport(
                 put("start_ms", JsonPrimitive((elapsed - 1000).coerceAtLeast(0).toInt()))
                 put("end_ms", JsonPrimitive(elapsed.toInt()))
             })
-            onLevels?.invoke(0.0, 0.0)
+            smoothOutput *= 0.1
+            onLevels?.invoke(smoothInput, smoothOutput)
         }
     }
 
@@ -254,8 +257,9 @@ class GeminiLiveTransport(
             i += 2
         }
         val rms = kotlin.math.sqrt(sum / (pcmData.size / 2))
-        val inputLevel = (rms / Short.MAX_VALUE).coerceIn(0.0, 1.0)
-        onLevels?.invoke(inputLevel, 0.0)
+        val raw = (rms / Short.MAX_VALUE).coerceIn(0.0, 1.0)
+        smoothInput = smoothInput * 0.6 + raw * 0.4
+        onLevels?.invoke(smoothInput, smoothOutput)
 
         val base64Data = android.util.Base64.encodeToString(pcmData, android.util.Base64.NO_WRAP)
         val msg = buildJsonObject {
@@ -372,8 +376,9 @@ class GeminiLiveTransport(
             i += 2
         }
         val rms = kotlin.math.sqrt(sum / (data.size / 2))
-        val outputLevel = (rms / Short.MAX_VALUE).coerceIn(0.0, 1.0)
-        onLevels?.invoke(0.0, outputLevel)
+        val raw = (rms / Short.MAX_VALUE).coerceIn(0.0, 1.0)
+        smoothOutput = smoothOutput * 0.5 + raw * 0.5
+        onLevels?.invoke(smoothInput, smoothOutput)
     }
 
     private fun stopAudio() {

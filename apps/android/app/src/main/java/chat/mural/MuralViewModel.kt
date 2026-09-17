@@ -264,15 +264,22 @@ class MuralViewModel(application: Application) : AndroidViewModel(application) {
             inputLevel = input; outputLevel = output
             if (input > 0.03 || output > 0.03) lastActivity = nowSeconds()
         }
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
         geminiTransport.onEvent = { event ->
-            try { handle(event) }
-            catch (_: IllegalArgumentException) { notice = getApplication<Application>().getString(R.string.notice_invalid_voice_update) }
-            catch (_: IllegalStateException) { notice = getApplication<Application>().getString(R.string.notice_invalid_voice_update) }
+            mainHandler.post {
+                try { handle(event) }
+                catch (_: IllegalArgumentException) { notice = getApplication<Application>().getString(R.string.notice_invalid_voice_update) }
+                catch (_: IllegalStateException) { notice = getApplication<Application>().getString(R.string.notice_invalid_voice_update) }
+            }
         }
-        geminiTransport.onFailure = { fail(it) }
+        geminiTransport.onFailure = { error ->
+            mainHandler.post { fail(error) }
+        }
         geminiTransport.onLevels = { input, output ->
-            inputLevel = input; outputLevel = output
-            if (input > 0.03 || output > 0.03) lastActivity = nowSeconds()
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                inputLevel = input; outputLevel = output
+                if (input > 0.03 || output > 0.03) lastActivity = nowSeconds()
+            }
         }
         meanings.onChange = { meaning = meanings.text; translating = meanings.isLoading; meaningFailed = meanings.error != null }
         meanings.onResult = { request, result ->
